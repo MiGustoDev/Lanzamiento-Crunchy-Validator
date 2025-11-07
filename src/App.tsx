@@ -7,6 +7,7 @@ function App() {
   const [dni, setDni] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ valid: boolean; message: string } | null>(null);
+  const [details, setDetails] = useState<{ sucursal?: string; fecha?: string } | null>(null);
 
   const handleValidate = async () => {
     if (!codigoPromocional.trim() || !dni.trim()) {
@@ -16,6 +17,7 @@ function App() {
 
     setLoading(true);
     setResult(null);
+    setDetails(null);
 
     try {
       const { data, error } = await supabase
@@ -31,6 +33,45 @@ function App() {
 
       if (data) {
         setResult({ valid: true, message: 'Código promocional válido' });
+
+        // Intentar mapear posibles nombres de campos para sucursal y fecha
+        const anyData = data as unknown as Record<string, any>;
+        const sucursal =
+          anyData?.sucursal_nombre ??
+          anyData?.sucursal ??
+          anyData?.branch ??
+          anyData?.sede ??
+          anyData?.location ??
+          undefined;
+
+        // Buscar la fecha real de la reserva en la tabla 'reservas' usando el mismo código
+        let fecha: string | undefined = undefined;
+        try {
+          const { data: reservaRow, error: reservaError } = await supabase
+            .from('reservas')
+            .select('fecha_reserva, sucursal_nombre')
+            .eq('codigo', codigoPromocional.trim())
+            .maybeSingle();
+          if (!reservaError && reservaRow) {
+            const rawFecha = (reservaRow as any)?.fecha_reserva;
+            fecha = rawFecha ? new Date(rawFecha).toLocaleDateString() : undefined;
+            // Si por algún motivo faltara la sucursal en codigos, usar la de reservas
+            if (!sucursal && (reservaRow as any)?.sucursal_nombre) {
+              setDetails({ sucursal: (reservaRow as any).sucursal_nombre, fecha });
+            } else {
+              setDetails({ sucursal, fecha });
+            }
+          } else {
+            // Fallback a campos de la propia fila de 'codigos'
+            const rawFechaFallback = anyData?.fecha_uso ?? anyData?.created_at ?? undefined;
+            fecha = rawFechaFallback ? new Date(rawFechaFallback).toLocaleDateString() : undefined;
+            setDetails({ sucursal, fecha });
+          }
+        } catch (_) {
+          const rawFechaFallback = anyData?.fecha_uso ?? anyData?.created_at ?? undefined;
+          fecha = rawFechaFallback ? new Date(rawFechaFallback).toLocaleDateString() : undefined;
+          setDetails({ sucursal, fecha });
+        }
       } else {
         setResult({ valid: false, message: 'Código promocional inválido para este DNI' });
       }
@@ -106,22 +147,40 @@ function App() {
           </div>
 
           {result && (
-            <div
-              className={`mt-6 p-4 rounded-lg flex items-center gap-3 animate-fade-in ${
-                result.valid
-                  ? 'bg-green-500/20 border border-green-400/30'
-                  : 'bg-red-500/20 border border-red-400/30'
-              }`}
-            >
-              {result.valid ? (
-                <CheckCircle className="w-6 h-6 text-green-400 flex-shrink-0" />
-              ) : (
-                <XCircle className="w-6 h-6 text-red-400 flex-shrink-0" />
+            <>
+              <div
+                className={`mt-6 p-4 rounded-lg flex items-center gap-3 animate-fade-in ${
+                  result.valid
+                    ? 'bg-green-500/20 border border-green-400/30'
+                    : 'bg-red-500/20 border border-red-400/30'
+                }`}
+              >
+                {result.valid ? (
+                  <CheckCircle className="w-6 h-6 text-green-400 flex-shrink-0" />
+                ) : (
+                  <XCircle className="w-6 h-6 text-red-400 flex-shrink-0" />
+                )}
+                <p className={`font-medium ${result.valid ? 'text-green-100' : 'text-red-100'}`}>
+                  {result.message}
+                </p>
+              </div>
+
+              {result.valid && (
+                <div className="mt-4 bg-white/10 border border-purple-400/30 rounded-xl p-4 text-purple-50">
+                  <p className="text-lg font-semibold mb-2">Código válido para:</p>
+                  <div className="space-y-1 text-sm">
+                    <p>
+                      <span className="font-semibold">Sucursal:</span>{' '}
+                      {details?.sucursal ?? '—'}
+                    </p>
+                    <p>
+                      <span className="font-semibold">Fecha:</span>{' '}
+                      {details?.fecha ?? '—'}
+                    </p>
+                  </div>
+                </div>
               )}
-              <p className={`font-medium ${result.valid ? 'text-green-100' : 'text-red-100'}`}>
-                {result.message}
-              </p>
-            </div>
+            </>
           )}
         </div>
       </div>
